@@ -16,7 +16,7 @@ This is the "classe" variable in the training set.
 
 #### Step 1 - Getting the Data
 
-```{r echo = FALSE}
+```{r}
 # We will use caret for all ML related tasks
 library(caret)
 
@@ -130,7 +130,8 @@ rm(classe, columnName, count, i)
 
 ###### 3.1 Training Model 1 - Classification Tree
 
-```{r echo = FALSE}
+```{r}
+# Classification Tree with 10-fold Cross-Validation
 cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
 registerDoParallel(cluster)
 fitControl <- trainControl(method = "cv", number = 10, allowParallel = TRUE)
@@ -143,8 +144,8 @@ stopCluster(cluster)
 
 ###### 3.2 Training Model 2 - RandomForest
 
-```{r echo = FALSE}
-# Random Forest with additional CV
+```{r}
+# Random Forest with 10-fold Cross-Validation
 cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
 registerDoParallel(cluster)
 fitControl <- trainControl(method = "cv", 
@@ -158,7 +159,7 @@ stopCluster(cluster)
 
 ###### 3.3 Training Model 3 - One-to-Many Logistic Regression
 
-```{r echo = FALSE}
+```{r}
 cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
 registerDoParallel(cluster)
 fitControl <- trainControl(method = "cv", 

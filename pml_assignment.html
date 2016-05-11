@@ -121,11 +121,40 @@ $(document).ready(function () {
 <p>The goal of your project is to predict the manner in which they did the exercise. This is the “classe” variable in the training set.</p>
 <div id="step-1---getting-the-data" class="section level4">
 <h4>Step 1 - Getting the Data</h4>
+<pre class="r"><code># We will use caret for all ML related tasks
+library(caret)</code></pre>
 <pre><code>## Loading required package: lattice
 ## Loading required package: ggplot2</code></pre>
 <pre><code>## Warning: package 'ggplot2' was built under R version 3.2.4</code></pre>
+<pre class="r"><code># Setting the seed for reproducibility
+setwd('~')
+set.seed(12345)
+
+# Enable Parallel Processing
+library(parallel)
+library(doParallel)</code></pre>
 <pre><code>## Loading required package: foreach
 ## Loading required package: iterators</code></pre>
+<pre class="r"><code># Source urls
+url &lt;- c('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv',
+         'https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv')
+
+setNames &lt;- vector(len = length(url))
+count &lt;- 1
+
+for (i in url) {
+  setName &lt;- strsplit(strsplit(strsplit(i, '/')[[1]][5], '\\.')[[1]][1], '-')[[1]][2]
+  setNames[count] &lt;- setName
+  count &lt;- count + 1
+}
+
+sources &lt;- data.frame(setNames, url)
+sources$url &lt;- as.character(url)
+
+for (i in setNames) {
+  filename &lt;- paste('pml-', i, '.csv', sep = '')
+  download.file(sources[(sources$setNames == i), 2], destfile = paste('~/', filename, sep = ''), method = &quot;curl&quot;)
+}</code></pre>
 </div>
 <div id="cleaning-the-data" class="section level4">
 <h4>3 - Cleaning the Data</h4>
@@ -202,10 +231,28 @@ rm(classe, columnName, count, i)</code></pre>
 <h4>3 - Training Models</h4>
 <div id="training-model-1---classification-tree" class="section level6">
 <h6>3.1 Training Model 1 - Classification Tree</h6>
+<pre class="r"><code># Classification Tree with 10-fold Cross-Validation
+cluster &lt;- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+fitControl &lt;- trainControl(method = &quot;cv&quot;, number = 10, allowParallel = TRUE)
+modelRPART &lt;- train(classe ~., 
+                    method= 'rpart', 
+                    data = TrainSet[ , !names(TrainSet) %in% c('classeA', 'classeB', 'classeC', 'classeD', 'classeE')], 
+                    trControl = fitControl)</code></pre>
 <pre><code>## Loading required package: rpart</code></pre>
+<pre class="r"><code>stopCluster(cluster)</code></pre>
 </div>
 <div id="training-model-2---randomforest" class="section level6">
 <h6>3.2 Training Model 2 - RandomForest</h6>
+<pre class="r"><code># Random Forest with 10-fold Cross-Validation
+cluster &lt;- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+fitControl &lt;- trainControl(method = &quot;cv&quot;, 
+                           number = 10, 
+                           allowParallel = TRUE)
+modelRF &lt;- train(classe ~., method= 'rf', 
+                 data = TrainSet[ , !names(TrainSet) %in% c('classeA', 'classeB', 'classeC', 'classeD', 'classeE')], 
+                 trControl = fitControl)</code></pre>
 <pre><code>## Loading required package: randomForest
 ## randomForest 4.6-12
 ## Type rfNews() to see new features/changes/bug fixes.
@@ -215,11 +262,43 @@ rm(classe, columnName, count, i)</code></pre>
 ## The following object is masked from 'package:ggplot2':
 ## 
 ##     margin</code></pre>
+<pre class="r"><code>stopCluster(cluster)</code></pre>
 </div>
 <div id="training-model-3---one-to-many-logistic-regression" class="section level6">
 <h6>3.3 Training Model 3 - One-to-Many Logistic Regression</h6>
+<pre class="r"><code>cluster &lt;- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+fitControl &lt;- trainControl(method = &quot;cv&quot;, 
+                           number = 10, 
+                           allowParallel = TRUE)
+modelGLMclasseA &lt;- train(classeA ~., 
+                         method = 'glm', 
+                         data = TrainSet[ , !names(TrainSet) %in% c('classe', 'classeB', 'classeC', 'classeD', 'classeE')], 
+                         trControl = fitControl, 
+                         family = binomial(link = &quot;logit&quot;))</code></pre>
 <pre><code>## Warning: glm.fit: fitted probabilities numerically 0 or 1 occurred</code></pre>
+<pre class="r"><code>modelGLMclasseB &lt;- train(classeB ~., 
+                         method = 'glm', 
+                         data = TrainSet[ , !names(TrainSet) %in% c('classe', 'classeA', 'classeC', 'classeD', 'classeE')], 
+                         trControl = fitControl, 
+                         family = binomial(link = &quot;logit&quot;))</code></pre>
 <pre><code>## Warning: glm.fit: fitted probabilities numerically 0 or 1 occurred</code></pre>
+<pre class="r"><code>modelGLMclasseC &lt;- train(classeC ~., 
+                         method = 'glm', 
+                         data = TrainSet[ , !names(TrainSet) %in% c('classe', 'classeA', 'classeB', 'classeD', 'classeE')], 
+                         trControl = fitControl, 
+                         family = binomial(link = &quot;logit&quot;))
+modelGLMclasseD &lt;- train(classeD ~., 
+                         method = 'glm', 
+                         data = TrainSet[ , !names(TrainSet) %in% c('classe', 'classeA', 'classeB', 'classeC', 'classeE')], 
+                         trControl = fitControl, 
+                         family = binomial(link = &quot;logit&quot;))
+modelGLMclasseE &lt;- train(classeE ~., 
+                         method = 'glm', 
+                         data = TrainSet[ , !names(TrainSet) %in% c('classe', 'classeA', 'classeB', 'classeC', 'classeD')], 
+                         trControl = fitControl, 
+                         family = binomial(link = &quot;logit&quot;))
+stopCluster(cluster)</code></pre>
 </div>
 </div>
 <div id="model-accuracy" class="section level4">
