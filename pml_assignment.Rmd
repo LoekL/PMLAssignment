@@ -1,0 +1,290 @@
+---
+title: "PML - Assignment"
+author: "lukas landzaat"
+date: "11 May 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Goal
+
+The goal of your project is to predict the manner in which they did the exercise.
+This is the "classe" variable in the training set.
+
+#### Step 1 - Getting the Data
+
+```{r echo = FALSE}
+# We will use caret for all ML related tasks
+library(caret)
+
+# Setting the seed for reproducibility
+setwd('~')
+set.seed(12345)
+
+# Enable Parallel Processing
+library(parallel)
+library(doParallel)
+
+# Source urls
+url <- c('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv',
+         'https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv')
+
+setNames <- vector(len = length(url))
+count <- 1
+
+for (i in url) {
+  setName <- strsplit(strsplit(strsplit(i, '/')[[1]][5], '\\.')[[1]][1], '-')[[1]][2]
+  setNames[count] <- setName
+  count <- count + 1
+}
+
+sources <- data.frame(setNames, url)
+sources$url <- as.character(url)
+
+for (i in setNames) {
+  filename <- paste('pml-', i, '.csv', sep = '')
+  download.file(sources[(sources$setNames == i), 2], destfile = paste('~/', filename, sep = ''), method = "curl")
+}
+```
+
+#### 3 - Cleaning the Data
+
+```{r}
+setwd('~')
+
+# Trainset
+
+# Here we treat values that contain 'NA' or are blank ("") as missing
+trainSource <- read.csv('pml-training.csv', na.strings = c("NA", ""))
+
+# We will do a one-to-many logistic regression later on
+# Therefore we add 5 indicator columns [A:E]
+for (i in levels(trainSource$classe)) {
+  columnName <- paste('classe', i, sep = '')
+  trainSource[(trainSource$classe == i), columnName] <- 1
+  trainSource[is.na(trainSource[,columnName]), columnName] <- 0
+  trainSource[,columnName] <- as.factor(trainSource[,columnName])
+}
+
+# Only selecting relevant columns
+logicalColumns <- grepl('.*arm.*|.*dumbbell.*|.*belt.*|.*forearm.*|.*classe.*', colnames(trainSource))
+trainSource <- trainSource[ , logicalColumns]
+
+# Check for % of missing values..!
+columnsNA <- vector(length = dim(trainSource)[2])
+count <- 1
+
+for (i in names(trainSource)) {
+  columnsNA[count] <- sum(is.na(trainSource[,i])) / length(trainSource[,i])
+  count <- count + 1
+}
+
+# Going to only include columns where there are 0 NA values
+columnsNaLogical <- columnsNA == 0
+trainSource <- trainSource[ , columnsNaLogical]
+
+## TestSet
+testSource <- read.csv('pml-testing.csv', na.strings = c("NA", ""))
+
+# Only selecting relevant columns
+logicalColumns <- grepl('.*arm.*|.*dumbbell.*|.*belt.*|.*forearm.*|.*classe.*', colnames(testSource))
+testSource <- testSource[ , logicalColumns]
+testSource <- testSource[ , columnsNaLogical[1:152]]
+
+```
+
+#### 2 - Dividing the training data into ValidationSet, TrainSet & TestSet
+
+```{r}
+# First we separate out a ValidationSet set from trainSource
+inValidation <- createDataPartition(y = trainSource$classe, p = 0.3, list = FALSE)
+ValidationSet <- trainSource[inValidation,] # 30% of Data
+NonValidationSet <- trainSource[-inValidation,] # 70% of Data
+
+# Second we sub-divide the NonValidationSet into a TrainSet & TestSet
+inTrain <- createDataPartition(y = NonValidationSet$classe, p = 0.6, list = FALSE)
+TrainSet <- NonValidationSet[inTrain,] # 60% of 70%
+TestSet <- NonValidationSet[-inTrain,] # 40% of 70%
+
+# Separating numeric variables from factor variables.
+logicalNumerics <- vector(length = dim(trainSource)[2])
+count <- 1
+
+for (i in names(trainSource)) {
+  if (class(trainSource[,i]) %in% c('numeric', 'integer') == TRUE) { logicalNumerics[count] <- TRUE }
+  count <- count + 1
+}
+
+classe <- names(TrainSet) == 'classe'
+logicalNumerics <- (logicalNumerics + classe) > 0
+logicalFactors <- !logicalNumerics
+
+# Removing redundant variables
+rm(classe, columnName, count, i)
+```
+
+#### 3 - Training Models
+
+###### 3.1 Training Model 1 - Classification Tree
+
+```{r echo = FALSE}
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+fitControl <- trainControl(method = "cv", number = 10, allowParallel = TRUE)
+modelRPART <- train(classe ~., 
+                    method= 'rpart', 
+                    data = TrainSet[ , !names(TrainSet) %in% c('classeA', 'classeB', 'classeC', 'classeD', 'classeE')], 
+                    trControl = fitControl)
+stopCluster(cluster)
+```
+
+###### 3.2 Training Model 2 - RandomForest
+
+```{r echo = FALSE}
+# Random Forest with additional CV
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+fitControl <- trainControl(method = "cv", 
+                           number = 10, 
+                           allowParallel = TRUE)
+modelRF <- train(classe ~., method= 'rf', 
+                 data = TrainSet[ , !names(TrainSet) %in% c('classeA', 'classeB', 'classeC', 'classeD', 'classeE')], 
+                 trControl = fitControl)
+stopCluster(cluster)
+```
+
+###### 3.3 Training Model 3 - One-to-Many Logistic Regression
+
+```{r echo = FALSE}
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+fitControl <- trainControl(method = "cv", 
+                           number = 10, 
+                           allowParallel = TRUE)
+modelGLMclasseA <- train(classeA ~., 
+                         method = 'glm', 
+                         data = TrainSet[ , !names(TrainSet) %in% c('classe', 'classeB', 'classeC', 'classeD', 'classeE')], 
+                         trControl = fitControl, 
+                         family = binomial(link = "logit"))
+modelGLMclasseB <- train(classeB ~., 
+                         method = 'glm', 
+                         data = TrainSet[ , !names(TrainSet) %in% c('classe', 'classeA', 'classeC', 'classeD', 'classeE')], 
+                         trControl = fitControl, 
+                         family = binomial(link = "logit"))
+modelGLMclasseC <- train(classeC ~., 
+                         method = 'glm', 
+                         data = TrainSet[ , !names(TrainSet) %in% c('classe', 'classeA', 'classeB', 'classeD', 'classeE')], 
+                         trControl = fitControl, 
+                         family = binomial(link = "logit"))
+modelGLMclasseD <- train(classeD ~., 
+                         method = 'glm', 
+                         data = TrainSet[ , !names(TrainSet) %in% c('classe', 'classeA', 'classeB', 'classeC', 'classeE')], 
+                         trControl = fitControl, 
+                         family = binomial(link = "logit"))
+modelGLMclasseE <- train(classeE ~., 
+                         method = 'glm', 
+                         data = TrainSet[ , !names(TrainSet) %in% c('classe', 'classeA', 'classeB', 'classeC', 'classeD')], 
+                         trControl = fitControl, 
+                         family = binomial(link = "logit"))
+stopCluster(cluster)
+```
+
+#### 4 - Model Accuracy 
+
+###### 4.1 Results: Model 1 - Classification Tree
+
+```{r}
+# Evaluate on TrainSet
+modelRPART[[4]][1,2]
+
+# Evaluate on TestSet
+confusionMatrix(TestSet$classe, 
+                predict(modelRPART, 
+                TestSet[ , !names(TrainSet) %in% c('classeA', 'classeB', 'classeC', 'classeD', 'classeE')]))[[3]][1]
+```
+
+###### 4.2 Results: Model 2 - RandomForest
+
+```{r}
+# Evaluate on TrainSet
+modelRF[[4]][1,2]
+
+# Evaluate on TestSet
+confusionMatrix(TestSet$classe, 
+                predict(modelRF, 
+                TestSet[ , !names(TrainSet) %in% c('classeA', 'classeB', 'classeC', 'classeD', 'classeE')]))[[3]][1]
+```
+
+###### 4.3 Results: Model 3 - One-to-Many Logistic Regression
+
+```{r}
+# First we get the predictions of all our models
+A <- predict(modelGLMclasseA, 
+             TestSet[ , !names(TrainSet) %in% c('classe', 'classeB', 'classeC', 'classeD', 'classeE')], 
+             type = 'prob')[,2]
+B <- predict(modelGLMclasseB, 
+             TestSet[ , !names(TrainSet) %in% c('classe', 'classeA', 'classeC', 'classeD', 'classeE')], 
+             type = 'prob')[,2]
+C <- predict(modelGLMclasseC, 
+             TestSet[ , !names(TrainSet) %in% c('classe', 'classeA', 'classeB', 'classeD', 'classeE')], 
+             type = 'prob')[,2]
+D <- predict(modelGLMclasseD, 
+             TestSet[ , !names(TrainSet) %in% c('classe', 'classeA', 'classeB', 'classeC', 'classeE')], 
+             type = 'prob')[,2]
+E <- predict(modelGLMclasseE, 
+             TestSet[ , !names(TrainSet) %in% c('classe', 'classeA', 'classeB', 'classeC', 'classeD')], 
+             type = 'prob')[,2]
+predictions <- data.frame(A, B, C, D, E)
+
+# We will now determine for each instance which model has the highest prediction
+# And assign the values the corresponding class
+maxValues <- apply(predictions, 1, max)
+predictions$final <- NULL
+
+for (i in 1:dim(predictions)[1]) {
+  for (j in names(predictions)[1:5]) {
+    if (predictions[i,j] == maxValues[i]) {
+      predictions[i,'final'] <- j
+      break
+    }
+    else { next }
+  }
+}
+
+# This looks like this:
+head(predictions)
+
+# We can now evaluate the final accuracy:
+confusionMatrix(TestSet$classe, predictions$final)[[3]][1]
+```
+
+#### 5 - Choosing Optimal Model & Assessing Accuracy on ValidationSet
+
+It seems evident that the **RandomForest** algorithm has by far the highest accuracy.
+
+However, we used the TestSet to evaluate which algorithm works best. Therefore we must use the ValidationSet
+to see what the final estimated out of sample accuracy is of our chosen algorithm:
+
+```{r}
+# Evaluate on ValidationSet
+confusionMatrix(ValidationSet$classe, 
+                predict(modelRF, 
+                ValidationSet[ , !names(TrainSet) %in% c('classeA', 'classeB', 'classeC', 'classeD', 'classeE')]))[[3]][1]
+```
+
+This is the final out of sample accuracy!
+
+#### 6 - Predicting classe of the 20 Test Cases
+
+```{r}
+# Aggregate Results:
+table(predict(modelRF, testSource))
+
+# Results by row:
+prediction <- predict(modelRF, testSource)
+row <- 1:20
+data.frame(row, prediction)
+```
